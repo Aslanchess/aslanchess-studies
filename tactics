@@ -1,0 +1,164 @@
+// pages/index.tsx
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import dynamic from "next/dynamic";
+import { Chess } from "chess.js";
+
+const Chessboard = dynamic(() => import("@react-chess/chessboard"), { ssr: false });
+
+export default function Home() {
+  const [pgnText, setPgnText] = useState("");
+  const [tasks, setTasks] = useState<string[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [game, setGame] = useState(new Chess());
+  const [solutionMoves, setSolutionMoves] = useState<string[]>([]);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [feedback, setFeedback] = useState<string>("");
+  const [timer, setTimer] = useState<number>(0);
+  const [score, setScore] = useState<number>(0);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("aslanchess-progress");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setCurrentIndex(parsed.currentIndex || 0);
+      setScore(parsed.score || 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "aslanchess-progress",
+      JSON.stringify({ currentIndex, score })
+    );
+  }, [currentIndex, score]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (solutionMoves.length > 0 && currentMoveIndex < solutionMoves.length) {
+      interval = setInterval(() => setTimer((t) => t + 1), 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [solutionMoves, currentMoveIndex]);
+
+  function parsePGN(pgn: string) {
+    const games = pgn.split(/\n\s*\n/).filter((g) => g.includes("1."));
+    setTasks(games);
+    setCurrentIndex(0);
+    setFeedback("");
+
+    const newGame = new Chess();
+    try {
+      newGame.loadPgn(games[0]);
+      const history = newGame.history({ verbose: true });
+
+      if (history.length > 0) {
+        const solution = history.map((m) => `${m.from}-${m.to}`);
+        newGame.reset();
+        setGame(new Chess());
+        setSolutionMoves(solution);
+        setCurrentMoveIndex(0);
+        setTimer(0);
+      }
+    } catch (err) {
+      console.error("PGN parse error:", err);
+    }
+  }
+
+  function onMove(from: string, to: string) {
+    const moveNotation = `${from}-${to}`;
+    const newGame = new Chess(game.fen());
+    const move = newGame.move({ from, to });
+
+    if (move) {
+      if (moveNotation === solutionMoves[currentMoveIndex]) {
+        setGame(newGame);
+        const nextIndex = currentMoveIndex + 1;
+        setCurrentMoveIndex(nextIndex);
+        setScore((s) => s + 1);
+
+        if (nextIndex === solutionMoves.length) {
+          setFeedback(`✅ Bütün tapşırıq düzgün həll edildi! (${timer} saniyə)`);
+        } else {
+          setFeedback("✅ Doğru! Davam edin...");
+        }
+      } else {
+        setFeedback("❌ Səhv cavab. Yenidən yoxlayın.");
+      }
+    } else {
+      setFeedback("❌ Etibarsız hərəkət.");
+    }
+  }
+
+  function loadTask(index: number) {
+    const newGame = new Chess();
+    newGame.loadPgn(tasks[index]);
+    const history = newGame.history({ verbose: true });
+
+    if (history.length > 0) {
+      const solution = history.map((m) => `${m.from}-${m.to}`);
+      newGame.reset();
+      setGame(new Chess());
+      setSolutionMoves(solution);
+      setCurrentMoveIndex(0);
+      setTimer(0);
+    }
+    setCurrentIndex(index);
+    setFeedback("");
+  }
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">Çalışmalar</h1>
+
+      <Card className="mb-4">
+        <CardContent className="p-4">
+          <textarea
+            className="w-full h-48 border rounded p-2 text-sm"
+            placeholder="Buraya PGN fayl mətnini yapışdırın..."
+            value={pgnText}
+            onChange={(e) => setPgnText(e.target.value)}
+          />
+          <Button className="mt-2" onClick={() => parsePGN(pgnText)}>
+            Tapşırıqları Yarat
+          </Button>
+        </CardContent>
+      </Card>
+
+      {tasks.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <h2 className="text-lg font-semibold mb-2">
+              Tapşırıq {currentIndex + 1} — ⏱ {timer} san — 🧠 Xal: {score}
+            </h2>
+            <div className="mb-4">
+              <Chessboard position={game.fen()} onPieceDrop={onMove} />
+            </div>
+            {feedback && (
+              <div className="mb-4 text-sm font-medium">
+                {feedback}
+              </div>
+            )}
+            <pre className="bg-gray-100 p-2 rounded text-sm whitespace-pre-wrap">
+              {tasks[currentIndex]}
+            </pre>
+            <div className="mt-4 flex gap-2">
+              <Button onClick={() => loadTask(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
+                Əvvəlki
+              </Button>
+              <Button
+                onClick={() => loadTask(Math.min(tasks.length - 1, currentIndex + 1))}
+                disabled={currentIndex === tasks.length - 1}
+              >
+                Növbəti
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
